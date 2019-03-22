@@ -1,0 +1,17 @@
+{
+  "name": "nyx_ws",
+  "version": "1.0.0",
+  "description": "",
+  "main": "ws_server.js",
+  "dependencies": {
+    "log4js": "^4.0.2",
+    "mqtt": "^2.18.8",
+    "ws": "^6.2.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
