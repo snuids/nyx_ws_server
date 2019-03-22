@@ -12,13 +12,13 @@ log4js.configure({
 
 const WebSocket = require('ws')
 var mqtt = require('mqtt')
-var VERSION = "1.0.0"
+var VERSION = "1.0.1"
 var messages = 0
 
-var ws_config = [
-  { "name": "MCS1", "port": 8080 },
-  { "name": "MCS2", "port": 8081 }
-]
+logger.info("Starting WS Server:"+VERSION)
+var ws_config = JSON.parse(process.env.CONFIG.replace(/'/g,"\""))
+logger.info("CONFIG")
+logger.info(ws_config)
 
 var clientsHT = {}
 ws_config.forEach(function (onews) {
