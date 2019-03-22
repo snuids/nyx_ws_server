@@ -4,3 +4,4 @@ sources/node_modules/*
 package-lock.json
 ws_server.sh
 sources/.DS_Store
+.DS_Store
