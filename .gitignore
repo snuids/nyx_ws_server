@@ -1,4 +1,6 @@
 node_modules/*
+sources/node_modules/*
 *.log
 package-lock.json
 ws_server.sh
+sources/.DS_Store
