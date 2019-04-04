@@ -12,7 +12,7 @@ log4js.configure({
 
 const WebSocket = require('ws')
 var mqtt = require('mqtt')
-var VERSION = "1.0.1"
+var VERSION = "1.0.2"
 var messages = 0
 
 logger.info("Starting WS Server:"+VERSION)
@@ -106,9 +106,10 @@ setInterval(moduleLifeSign, 5000);
 ws_config.forEach(function (onews) {
   logger.info(onews);
   onews.wss = new WebSocket.Server({ port: onews.port })
-  onews.wss.on('connection', ws => {
-    logger.info("New Client...")
-    logger.info("New Client..." + onews.wss.name)
+  onews.wss.on('connection', (ws,req) => {
+    logger.info(">> New Client. for "+onews.name+" port:"+onews.port)
+    logger.info(">> IP:"+req.connection.remoteAddress)
+    mqttclient.publish('NYX_WS_INFO', JSON.stringify({"Name":onews.name,"Port":onews.port,"IP":req.connection.remoteAddress}));
     onews.wss.on('message', message => {
       logger.info(`Received message => ${message}`)
     })
@@ -118,7 +119,7 @@ ws_config.forEach(function (onews) {
 function checkWebSockets() {
   ws_config.forEach(function (onews) {
     logger.info("Name:" + onews.name + " clients:" + onews.wss.clients.size);
-    if (onews.wss.clients.size > 0) {
+    if (onews.wss.clients.size > 0) {      
       onews.wss.clients.forEach(function (onecli) {
         onecli.send(JSON.stringify({ "type": "lifesign" }));
       });
