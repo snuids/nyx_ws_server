@@ -12,7 +12,7 @@ log4js.configure({
 
 const WebSocket = require('ws')
 var mqtt = require('mqtt')
-var VERSION = "1.0.2"
+var VERSION = "1.0.3"
 var messages = 0
 
 logger.info("Starting WS Server:"+VERSION)
@@ -49,6 +49,14 @@ mqttclient.on('message', function (topic, message) {
   logger.info("Received:" + message.toString());
   try {
     var newmes = JSON.parse(message.toString());
+    let type = "message";
+
+    if (newmes.type == undefined) {
+      logger.info("Type not specified. Using 'message' as default.");
+    } else {
+      type = newmes.type;
+    }
+
     if (newmes.target == undefined) {
       logger.info("Target not specified.");
       return;
@@ -65,7 +73,7 @@ mqttclient.on('message', function (topic, message) {
     onews = clientsHT[newmes.target];
     if (onews.wss.clients.size > 0) {
       onews.wss.clients.forEach(function (onecli) {
-        onecli.send(JSON.stringify({ "type": "message", "data": newmes.data }));
+        onecli.send(JSON.stringify({ "type": type, "data": newmes.data }));
       });
     }
     else {
