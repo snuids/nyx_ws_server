@@ -12,7 +12,7 @@ log4js.configure({
 
 const WebSocket = require('ws')
 var mqtt = require('mqtt')
-var VERSION = "1.0.4b"
+var VERSION = "1.0.4c"
 var messages = 0
 
 logger.info("Starting WS Server:"+VERSION)
@@ -21,11 +21,10 @@ logger.info("CONFIG")
 logger.info(ws_config)
 /*
   config example
-/ - "CONFIG=[{ 'name': 'HHTs', 'port': 59999, 'lifesign': false }]"
+/ - "CONFIG=[{ 'name': 'HHTs', 'port': 59999, 'lifesign': false, 'forward_topic': 'HHTMessages' }]"
 */
 var clientsHT = {}
 ws_config.forEach(function (onews) {
-
   clientsHT[onews.name] = onews;
 });
 
@@ -121,8 +120,12 @@ ws_config.forEach(function (onews) {
     logger.info(">> New Client. for "+onews.name+" port:"+onews.port)
     logger.info(">> IP:"+req.connection.remoteAddress)
     mqttclient.publish('NYX_WS_INFO', JSON.stringify({"Name":onews.name,"Port":onews.port,"IP":req.connection.remoteAddress}));
-    ws.on('message', message => {
-      logger.info(`Received message => ${message}`)
+    ws.on('message', (message) => {
+      logger.info(`Received message => ${message}`);
+      if ('forward_topic' in onews) {
+        logger.info(`Forwarding to topic => ${onews['forward_topic']}`);
+        mqttclient.publish(onews['forward_topic'], message);
+      }
     })
   })
 });
@@ -134,13 +137,8 @@ function checkWebSockets() {
       onews.wss.clients.forEach(function (onecli) {
         onecli.send(JSON.stringify({ "type": "lifesign" }));
       });
-
     }
-
   });
 }
 
 setInterval(checkWebSockets, 5000);
-
-
-
