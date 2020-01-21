@@ -12,14 +12,17 @@ log4js.configure({
 
 const WebSocket = require('ws')
 var mqtt = require('mqtt')
-var VERSION = "1.0.3"
+var VERSION = "1.0.4"
 var messages = 0
 
 logger.info("Starting WS Server:"+VERSION)
 var ws_config = JSON.parse(process.env.CONFIG.replace(/'/g,"\""))
 logger.info("CONFIG")
 logger.info(ws_config)
-
+/*
+  config example
+/ - "CONFIG=[{ 'name': 'HHTs', 'port': 59999, 'lifesign': false }]"
+*/
 var clientsHT = {}
 ws_config.forEach(function (onews) {
 
@@ -127,7 +130,7 @@ ws_config.forEach(function (onews) {
 function checkWebSockets() {
   ws_config.forEach(function (onews) {
     logger.info("Name:" + onews.name + " clients:" + onews.wss.clients.size);
-    if (onews.wss.clients.size > 0) {      
+    if (onews.wss.clients.size > 0 && (('lifesign' in onews && onews['lifesign'] == true) || !('lifesign' in onews))) {      
       onews.wss.clients.forEach(function (onecli) {
         onecli.send(JSON.stringify({ "type": "lifesign" }));
       });
