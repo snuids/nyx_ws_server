@@ -12,7 +12,7 @@ log4js.configure({
 
 const WebSocket = require('ws')
 var mqtt = require('mqtt')
-var VERSION = "1.0.4a"
+var VERSION = "1.0.4b"
 var messages = 0
 
 logger.info("Starting WS Server:"+VERSION)
@@ -121,7 +121,7 @@ ws_config.forEach(function (onews) {
     logger.info(">> New Client. for "+onews.name+" port:"+onews.port)
     logger.info(">> IP:"+req.connection.remoteAddress)
     mqttclient.publish('NYX_WS_INFO', JSON.stringify({"Name":onews.name,"Port":onews.port,"IP":req.connection.remoteAddress}));
-    onews.wss.on('message', message => {
+    ws.on('message', message => {
       logger.info(`Received message => ${message}`)
     })
   })
