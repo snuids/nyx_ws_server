@@ -4,7 +4,7 @@ logger.level = 'info';
 
 log4js.configure({
   appenders: {
-    filelog: { type: 'file', filename: './logs/ws_server.log', maxLogSize: 10485760, backups: 5, compress: true },
+    filelog: { type: 'dateFile', filename: './logs/ws_server.log' },
     everything: { type: 'stdout' },
   },
   categories: { default: { appenders: ['filelog', 'everything'], level: 'info' } }
@@ -12,7 +12,7 @@ log4js.configure({
 
 const WebSocket = require('ws')
 var mqtt = require('mqtt')
-var VERSION = "1.0.4c"
+var VERSION = "1.0.5"
 var messages = 0
 
 logger.info("Starting WS Server:"+VERSION)
