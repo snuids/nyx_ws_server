@@ -12,7 +12,7 @@ log4js.configure({
 
 const WebSocket = require("ws");
 var mqtt = require("mqtt");
-var VERSION = "1.0.6";
+var VERSION = "1.2.2";
 var messages = 0;
 
 logger.info("Starting WS Server:" + VERSION);
@@ -24,8 +24,47 @@ logger.info(ws_config);
 / - "CONFIG=[{ 'name': 'HHTs', 'port': 59999, 'lifesign': false, 'forward_topic': 'HHTMessages' }]"
 */
 var clientsHT = {};
+var globalLogins = {}; // Global map: login -> { target: targetName, ws: WebSocket }
+
+function loginKeys(user) {
+  if (!user) {
+    return [];
+  }
+  var keys = [];
+  ["id", "user", "login"].forEach(function (field) {
+    var value = user[field];
+    if (value && keys.indexOf(value) === -1) {
+      keys.push(value);
+    }
+  });
+  return keys;
+}
+
+function registerLogin(onews, ws, keys) {
+  keys.forEach(function (key) {
+    onews.clientLogins[key] = ws;
+    globalLogins[key] = { target: onews.name, ws: ws };
+  });
+  ws.logins = keys;
+  ws.login = keys[0];
+  ws.targetName = onews.name;
+}
+
+function unregisterLogin(onews, ws) {
+  (ws.logins || []).forEach(function (key) {
+    if (onews.clientLogins[key] === ws) {
+      delete onews.clientLogins[key];
+    }
+    if (globalLogins[key] && globalLogins[key].ws === ws) {
+      delete globalLogins[key];
+    }
+  });
+}
+
 ws_config.forEach(function (onews) {
   clientsHT[onews.name] = onews;
+  // Initialize login tracking for each WebSocket server
+  onews.clientLogins = {}; // Map: login -> WebSocket connection
 });
 
 logger.info(clientsHT);
@@ -59,26 +98,56 @@ mqttclient.on("message", function (topic, message) {
       type = newmes.type;
     }
 
-    if (newmes.target == undefined) {
-      logger.info("Target not specified.");
-      return;
-    }
     if (newmes.data == undefined) {
       logger.error("No data.");
       return;
     }
-    if (clientsHT[newmes.target] == undefined) {
-      logger.error("Unknown target.");
-      return;
-    }
 
-    onews = clientsHT[newmes.target];
-    if (onews.wss.clients.size > 0) {
-      onews.wss.clients.forEach(function (onecli) {
-        onecli.send(JSON.stringify({ type: type, data: newmes.data }));
-      });
+    // If login is specified (with or without target)
+    if (newmes.login != undefined) {
+      // Check if target is also specified
+      if (newmes.target != undefined) {
+        // Use specified target
+        if (clientsHT[newmes.target] == undefined) {
+          logger.error("Unknown target.");
+          return;
+        }
+        onews = clientsHT[newmes.target];
+        let targetClient = onews.clientLogins[newmes.login];
+        if (targetClient && targetClient.readyState === WebSocket.OPEN) {
+          targetClient.send(JSON.stringify({ type: type, data: newmes.data }));
+          logger.info("Message sent to login: " + newmes.login + " on target: " + newmes.target);
+        } else {
+          logger.error("Login '" + newmes.login + "' not found on target '" + newmes.target + "'.");
+        }
+      } else {
+        // No target specified - search globally
+        let loginInfo = globalLogins[newmes.login];
+        if (loginInfo && loginInfo.ws.readyState === WebSocket.OPEN) {
+          loginInfo.ws.send(JSON.stringify({ type: type, data: newmes.data }));
+          logger.info("Message sent to login: " + newmes.login + " (auto-found on target: " + loginInfo.target + ")");
+        } else {
+          logger.error("Login '" + newmes.login + "' not found or not connected.");
+        }
+      }
+    } else if (newmes.target != undefined) {
+      // Only target specified - broadcast to all clients on that target
+      if (clientsHT[newmes.target] == undefined) {
+        logger.error("Unknown target.");
+        return;
+      }
+      onews = clientsHT[newmes.target];
+      if (onews.wss.clients.size > 0) {
+        onews.wss.clients.forEach(function (onecli) {
+          onecli.send(JSON.stringify({ type: type, data: newmes.data }));
+        });
+        logger.info("Message broadcast to all clients on target: " + newmes.target);
+      } else {
+        logger.error("No client connected to target: " + newmes.target);
+      }
     } else {
-      logger.error("No client connected.");
+      logger.error("Either 'login' or 'target' must be specified.");
+      return;
     }
   } catch {
     logger.error("Unable to decode message");
@@ -88,13 +157,25 @@ mqttclient.on("message", function (topic, message) {
 function moduleLifeSign() {
   var clients = [];
   var connections = 0;
+  var allLogins = []; // List of all connected logins across all targets
+  
   ws_config.forEach(function (onews) {
     if (onews.wss != undefined) {
       if (onews.wss.clients != undefined) {
         connections += onews.wss.clients.size;
-        clients.push({ name: onews.name, port: onews.port, clients: +onews.wss.clients.size });
+        
+        // Get list of logins for this target
+        let targetLogins = Object.keys(onews.clientLogins || {});
+        allLogins = allLogins.concat(targetLogins);
+        
+        clients.push({ 
+          name: onews.name, 
+          port: onews.port, 
+          clients: +onews.wss.clients.size,
+          logins: targetLogins
+        });
       } else {
-        clients.push({ name: onews.name, port: onews.port, clients: 0 });
+        clients.push({ name: onews.name, port: onews.port, clients: 0, logins: [] });
       }
     }
   });
@@ -110,13 +191,14 @@ function moduleLifeSign() {
     eventtype: "lifesign",
     messages: messages,
     received: {},
-    amqclientversion: "1.0.0",
+    amqclientversion: VERSION,
     starttimets: new Date().getTime(),
     starttime: new Date(),
     connections: connections,
     platform: process.platform,
     icon: "socks",
     clients: clients,
+    logins: allLogins, // All connected logins
   };
 
   mqttclient.publish("NYX_MODULE_INFO", JSON.stringify(lifesign));
@@ -134,11 +216,48 @@ ws_config.forEach(function (onews) {
       "NYX_WS_INFO",
       JSON.stringify({ Name: onews.name, Port: onews.port, IP: req.connection.remoteAddress })
     );
+    
     ws.on("message", (message) => {
       logger.info(`Received message => ${message}`);
+      try {
+        let msgData = JSON.parse(message);
+        
+        // Handle UI authentication message format
+        const keys = loginKeys(msgData.user);
+        if (msgData.token && keys.length > 0) {
+          registerLogin(onews, ws, keys);
+          ws.userInfo = msgData.user; // Store full user info (language, privileges, etc.)
+          logger.info(`Client authenticated as: ${ws.login} (aliases: ${keys.join(", ")}, language: ${msgData.user.language})`);
+          // ws.send(JSON.stringify({ 
+          //   type: "auth_success", 
+          //   user: username,
+          //   authenticated: true
+          // }));
+          return;
+        }
+        
+        // Handle simple login message (backward compatibility)
+        if (msgData.type === "login" && msgData.login) {
+          registerLogin(onews, ws, [msgData.login]);
+          logger.info(`Client logged in as: ${msgData.login}`);
+          ws.send(JSON.stringify({ type: "login_success", login: msgData.login }));
+          return;
+        }
+      } catch (e) {
+        // If not JSON or no type/login, continue with forwarding
+      }
+      
       if ("forward_topic" in onews) {
         logger.info(`Forwarding to topic => ${onews["forward_topic"]}`);
         mqttclient.publish(onews["forward_topic"], message);
+      }
+    });
+    
+    // Clean up login mapping when client disconnects
+    ws.on("close", () => {
+      if (ws.login) {
+        logger.info(`Client disconnected: ${ws.login}`);
+        unregisterLogin(onews, ws);
       }
     });
   });
