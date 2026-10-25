@@ -12,7 +12,7 @@ log4js.configure({
 
 const WebSocket = require("ws");
 var mqtt = require("mqtt");
-var VERSION = "1.2.2";
+var VERSION = "1.2.3";
 var messages = 0;
 
 logger.info("Starting WS Server:" + VERSION);

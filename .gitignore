@@ -6,3 +6,9 @@ ws_server.sh
 sources/.DS_Store
 .DS_Store
 .DS_Store
+.vscode/
+.env
+.env.*
+*.pem
+*.key
+*.p12
