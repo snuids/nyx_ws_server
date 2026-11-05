@@ -12,13 +12,28 @@ log4js.configure({
 
 const WebSocket = require("ws");
 var mqtt = require("mqtt");
-var VERSION = "1.2.3";
+var redis = require("redis");
+const auth = require("./lib/auth");
+var VERSION = "1.2.4";
 var messages = 0;
 
 logger.info("Starting WS Server:" + VERSION);
 var ws_config = JSON.parse(process.env.CONFIG.replace(/'/g, '"'));
 logger.info("CONFIG");
 logger.info(ws_config);
+
+// The token store is the authority on who a socket is: the API writes `nyx_tok_<token>` on login,
+// with a 24 h TTL, and every other component (the nginx guard included) reads it from there.
+var redisClient = redis.createClient({
+  host: process.env.REDIS_IP || "redis",
+  port: parseInt(process.env.REDIS_PORT || "6379", 10),
+  // Without this, a command issued while Redis is down waits in a queue and its callback never
+  // fires: an authentication check must answer, not hang.
+  enable_offline_queue: false,
+});
+redisClient.on("error", function (error) {
+  logger.error("Redis: " + error.message);
+});
 /*
   config example
 / - "CONFIG=[{ 'name': 'HHTs', 'port': 59999, 'lifesign': false, 'forward_topic': 'HHTMessages' }]"
@@ -27,17 +42,7 @@ var clientsHT = {};
 var globalLogins = {}; // Global map: login -> { target: targetName, ws: WebSocket }
 
 function loginKeys(user) {
-  if (!user) {
-    return [];
-  }
-  var keys = [];
-  ["id", "user", "login"].forEach(function (field) {
-    var value = user[field];
-    if (value && keys.indexOf(value) === -1) {
-      keys.push(value);
-    }
-  });
-  return keys;
+  return auth.loginKeys(user);
 }
 
 function registerLogin(onews, ws, keys) {
@@ -61,6 +66,51 @@ function unregisterLogin(onews, ws) {
   });
 }
 
+function refuse(ws, reason) {
+  logger.warn("Closing socket: " + reason);
+  try {
+    ws.close(4401, reason);
+  } catch (error) {
+    ws.terminate();
+  }
+}
+
+// The token must exist in the store *and* belong to the account being claimed. Only the first
+// point used to be missing, which made every login a self-declaration.
+function authenticate(onews, ws, msgData, keys) {
+  var answered = false;
+  // A store that does not answer must not leave a socket waiting in an undefined state.
+  var timer = setTimeout(function () {
+    if (answered) {
+      return;
+    }
+    answered = true;
+    refuse(ws, "authentication timed out");
+  }, 2000);
+
+  redisClient.get(auth.tokenKey(msgData.token), function (error, stored) {
+    if (answered) {
+      return;
+    }
+    answered = true;
+    clearTimeout(timer);
+    if (error) {
+      logger.error("Token lookup failed: " + error.message);
+      refuse(ws, "authentication unavailable");
+      return;
+    }
+    if (!stored || !auth.identityMatches(stored, keys)) {
+      logger.warn("Rejected token claiming " + keys.join(","));
+      refuse(ws, "invalid token");
+      return;
+    }
+    registerLogin(onews, ws, keys);
+    ws.authenticated = true;
+    ws.userInfo = msgData.user;
+    logger.info(`Client authenticated as: ${ws.login} (aliases: ${keys.join(",")})`);
+  });
+}
+
 ws_config.forEach(function (onews) {
   clientsHT[onews.name] = onews;
   // Initialize login tracking for each WebSocket server
@@ -77,6 +127,10 @@ var mqttclient = mqtt.connect({
 });
 
 logger.info("Starting MQTT:" + process.env.AMQC_URL + ". Listening to:" + process.env.IN_TOPIC);
+
+mqttclient.on("error", function (error) {
+  logger.error("MQTT: " + error.message);
+});
 
 mqttclient.on("connect", function () {
   mqttclient.subscribe(process.env.IN_TOPIC, function (err) {
@@ -112,7 +166,7 @@ mqttclient.on("message", function (topic, message) {
           logger.error("Unknown target.");
           return;
         }
-        onews = clientsHT[newmes.target];
+        let onews = clientsHT[newmes.target];
         let targetClient = onews.clientLogins[newmes.login];
         if (targetClient && targetClient.readyState === WebSocket.OPEN) {
           targetClient.send(JSON.stringify({ type: type, data: newmes.data }));
@@ -136,10 +190,14 @@ mqttclient.on("message", function (topic, message) {
         logger.error("Unknown target.");
         return;
       }
-      onews = clientsHT[newmes.target];
+      let onews = clientsHT[newmes.target];
       if (onews.wss.clients.size > 0) {
         onews.wss.clients.forEach(function (onecli) {
-          onecli.send(JSON.stringify({ type: type, data: newmes.data }));
+          // Only OPEN sockets: a closed one silently buffers the send (and grows `bufferedAmount`)
+          // instead of reporting anything, so a broadcast would look delivered and be lost.
+          if (onecli.readyState === WebSocket.OPEN) {
+            onecli.send(JSON.stringify({ type: type, data: newmes.data }));
+          }
         });
         logger.info("Message broadcast to all clients on target: " + newmes.target);
       } else {
@@ -204,12 +262,60 @@ function moduleLifeSign() {
   mqttclient.publish("NYX_MODULE_INFO", JSON.stringify(lifesign));
 }
 
-setInterval(moduleLifeSign, 5000);
+var lifesignTimer = setInterval(moduleLifeSign, 5000);
+var heartbeatTimer = setInterval(checkWebSockets, 5000);
+
+// A container stop sends SIGTERM: closing the sockets and the broker link lets the clients see a
+// real disconnect instead of a dropped connection, and stops emitting heartbeats nobody reads.
+function shutdown(signal) {
+  logger.info("Stopping on " + signal);
+  clearInterval(lifesignTimer);
+  clearInterval(heartbeatTimer);
+  ws_config.forEach(function (onews) {
+    if (onews.wss) {
+      onews.wss.close();
+    }
+  });
+  mqttclient.end();
+  try {
+    redisClient.quit();
+  } catch (error) {
+    logger.warn("Redis close: " + error.message);
+  }
+  setTimeout(function () {
+    process.exit(0);
+  }, 500).unref();
+}
+
+process.on("SIGTERM", function () {
+  shutdown("SIGTERM");
+});
+process.on("SIGINT", function () {
+  shutdown("SIGINT");
+});
+process.on("unhandledRejection", function (reason) {
+  logger.error("Unhandled rejection: " + reason);
+});
+process.on("uncaughtException", function (error) {
+  // Leave a trace and let the supervisor restart a process in an unknown state.
+  logger.error("Uncaught exception: " + (error && error.stack ? error.stack : error));
+  process.exit(1);
+});
 
 ws_config.forEach(function (onews) {
   logger.info(onews);
-  onews.wss = new WebSocket.Server({ port: onews.port });
+  // `maxPayload` bounds what one client can make the process parse and relay: the default is
+  // 100 MiB, and the body is published to the broker as it arrives.
+  onews.wss = new WebSocket.Server({ port: onews.port, maxPayload: 64 * 1024 });
+  // An emitter error with no listener terminates the process: a single malformed frame would have
+  // been enough to stop every client from receiving anything.
+  onews.wss.on("error", function (error) {
+    logger.error("WebSocket server " + onews.name + ": " + error.message);
+  });
   onews.wss.on("connection", (ws, req) => {
+    ws.on("error", function (error) {
+      logger.error("Socket error (" + onews.name + "): " + error.message);
+    });
     logger.info(">> New Client. for " + onews.name + " port:" + onews.port);
     logger.info(">> IP:" + req.connection.remoteAddress);
     mqttclient.publish(
@@ -218,35 +324,36 @@ ws_config.forEach(function (onews) {
     );
     
     ws.on("message", (message) => {
-      logger.info(`Received message => ${message}`);
+      // The body carries the session token when a client authenticates: the raw string must never
+      // reach the log file, where it stays replayable for the life of the token.
+      logger.info(`Received message => ${auth.redact(message)}`);
       try {
         let msgData = JSON.parse(message);
-        
-        // Handle UI authentication message format
+
+        // UI authentication: a token plus the account it is supposed to belong to.
         const keys = loginKeys(msgData.user);
         if (msgData.token && keys.length > 0) {
-          registerLogin(onews, ws, keys);
-          ws.userInfo = msgData.user; // Store full user info (language, privileges, etc.)
-          logger.info(`Client authenticated as: ${ws.login} (aliases: ${keys.join(", ")}, language: ${msgData.user.language})`);
-          // ws.send(JSON.stringify({ 
-          //   type: "auth_success", 
-          //   user: username,
-          //   authenticated: true
-          // }));
+          authenticate(onews, ws, msgData, keys);
           return;
         }
-        
-        // Handle simple login message (backward compatibility)
-        if (msgData.type === "login" && msgData.login) {
-          registerLogin(onews, ws, [msgData.login]);
-          logger.info(`Client logged in as: ${msgData.login}`);
-          ws.send(JSON.stringify({ type: "login_success", login: msgData.login }));
+
+        // The token-less login path is gone: it registered a login on the client's word, which
+        // let anyone take over another client's traffic.
+        if (msgData.type === "login") {
+          refuse(ws, "authentication requires a token");
           return;
         }
       } catch (e) {
-        // If not JSON or no type/login, continue with forwarding
+        // Not a JSON control frame: a payload to forward, if this socket is allowed to.
       }
-      
+
+      // Publishing into the broker is publishing on the platform's internal bus. A target that
+      // really relays device traffic says so explicitly in its configuration.
+      if (!ws.authenticated && onews.allow_anonymous !== true) {
+        refuse(ws, "not authenticated");
+        return;
+      }
+
       if ("forward_topic" in onews) {
         logger.info(`Forwarding to topic => ${onews["forward_topic"]}`);
         mqttclient.publish(onews["forward_topic"], message);
@@ -268,10 +375,10 @@ function checkWebSockets() {
     logger.info("Name:" + onews.name + " clients:" + onews.wss.clients.size);
     if (onews.wss.clients.size > 0 && (("lifesign" in onews && onews["lifesign"] == true) || !("lifesign" in onews))) {
       onews.wss.clients.forEach(function (onecli) {
-        onecli.send(JSON.stringify({ type: "lifesign" }));
+        if (onecli.readyState === WebSocket.OPEN) {
+          onecli.send(JSON.stringify({ type: "lifesign" }));
+        }
       });
     }
   });
 }
-
-setInterval(checkWebSockets, 5000);
