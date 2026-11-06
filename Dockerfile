@@ -4,4 +4,5 @@ WORKDIR /etc/opt
 COPY ./sources/package.json /etc/opt/package.json
 RUN npm i
 COPY ./sources/ws_server.js /etc/opt/ws_server.js
+COPY ./sources/lib /etc/opt/lib
 CMD while true; do node ws_server; sleep 5; done
