@@ -1,8 +1,11 @@
 {
   "name": "nyx_ws",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "WebSocket relay for the NYX console",
   "main": "ws_server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "log4js": "^6.3.0",
     "mqtt": "^4.3.4",

@@ -14,7 +14,7 @@ const WebSocket = require("ws");
 var mqtt = require("mqtt");
 var redis = require("redis");
 const auth = require("./lib/auth");
-var VERSION = "1.2.4";
+var VERSION = "1.2.5";
 var messages = 0;
 
 logger.info("Starting WS Server:" + VERSION);
