@@ -21,31 +21,39 @@ cd "$(dirname "$0")/.."
 
 # `tests/` seul ne resout pas sur Node 22 (`Cannot find module .../tests`) : la liste des fichiers
 # est donnee par le shell, qui la resout partout.
-if ! REPORT=$(node --test --experimental-test-coverage tests/*.test.js 2>&1); then
+# `--test-reporter=spec` fixes the shape of the report (the default reporter switches to TAP when
+# there is no TTY, which is exactly the CI case, and prefixes every line with `# `).
+# `--test-coverage-exclude` keeps the tests themselves out of the measure: the ratio has to be about
+# `sources/`, not about the files doing the measuring.
+if ! REPORT=$(node --test --experimental-test-coverage --test-reporter=spec \
+        --test-coverage-exclude='tests/**' tests/*.test.js 2>&1); then
     printf '%s\n' "$REPORT"
     echo "ci_test: the suite failed" >&2
     exit 1
 fi
 
-printf '%s\n' "$REPORT" | grep -E '^(ℹ|✖|✔)' | tail -20
+# Le prefixe du rapport (`ℹ ` en spec, `# ` en TAP) est retire avant lecture.
+CLEAN=$(printf '%s\n' "$REPORT" | sed 's/^[[:space:]]*[#ℹ]\{0,1\}[[:space:]]*//')
+printf '%s\n' "$CLEAN" | grep -E '^(tests|pass|fail|skipped|all files)' | tail -8
+printf '%s\n' "$REPORT" | tail -16
 
 # Une suite vide rapporte 100 % : sans ce garde, un motif qui ne trouve plus de fichier passerait
 # pour une couverture parfaite.
-count=$(printf '%s\n' "$REPORT" | awk '/^ℹ tests /{print $3}')
+count=$(printf '%s\n' "$CLEAN" | awk '/^tests /{print $2}')
 if [ "${count:-0}" = "0" ] || [ -z "${count:-}" ]; then
     printf '%s\n' "$REPORT"
     echo "ci_test: no test ran — check the file pattern" >&2
     exit 1
 fi
 
-skipped=$(printf '%s\n' "$REPORT" | awk '/^ℹ skipped /{print $3}')
+skipped=$(printf '%s\n' "$CLEAN" | awk '/^skipped /{print $2}')
 if [ "${skipped:-0}" != "0" ]; then
     echo "ci_test: $skipped test(s) skipped — a skipped test disables itself in silence" >&2
     exit 1
 fi
 
-total=$(printf '%s\n' "$REPORT" | awk -F'|' '/all files/{gsub(/ /, "", $2); print $2}')
-branches=$(printf '%s\n' "$REPORT" | awk -F'|' '/all files/{gsub(/ /, "", $3); print $3}')
+total=$(printf '%s\n' "$CLEAN" | awk -F'|' '/^all files/{gsub(/ /, "", $2); print $2}')
+branches=$(printf '%s\n' "$CLEAN" | awk -F'|' '/^all files/{gsub(/ /, "", $3); print $3}')
 
 if [ -z "$total" ]; then
     echo "ci_test: no coverage summary in the report — the measure changed shape" >&2
