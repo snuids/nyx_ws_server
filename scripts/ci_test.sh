@@ -19,13 +19,24 @@ BRANCH_FLOOR=95
 
 cd "$(dirname "$0")/.."
 
-if ! REPORT=$(node --test --experimental-test-coverage tests/ 2>&1); then
+# `tests/` seul ne resout pas sur Node 22 (`Cannot find module .../tests`) : la liste des fichiers
+# est donnee par le shell, qui la resout partout.
+if ! REPORT=$(node --test --experimental-test-coverage tests/*.test.js 2>&1); then
     printf '%s\n' "$REPORT"
     echo "ci_test: the suite failed" >&2
     exit 1
 fi
 
 printf '%s\n' "$REPORT" | grep -E '^(ℹ|✖|✔)' | tail -20
+
+# Une suite vide rapporte 100 % : sans ce garde, un motif qui ne trouve plus de fichier passerait
+# pour une couverture parfaite.
+count=$(printf '%s\n' "$REPORT" | awk '/^ℹ tests /{print $3}')
+if [ "${count:-0}" = "0" ] || [ -z "${count:-}" ]; then
+    printf '%s\n' "$REPORT"
+    echo "ci_test: no test ran — check the file pattern" >&2
+    exit 1
+fi
 
 skipped=$(printf '%s\n' "$REPORT" | awk '/^ℹ skipped /{print $3}')
 if [ "${skipped:-0}" != "0" ]; then

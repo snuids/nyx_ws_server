@@ -12,7 +12,7 @@ Use the following environment variables:
 # TESTS
 
 ```shell
-node --test tests/            # the suite
+node --test tests/*.test.js   # the suite
 sh scripts/ci_test.sh         # what the CI runs: the suite, and a floor under its coverage
 ```
 
