@@ -1,9 +1,8 @@
 name: CI - Tests
 
 # The suite covers `sources/` with Node's own coverage (no dependency to install: the tests double
-# `ws`, `mqtt`, `redis` and `log4js`). The runtime image is still Node 13 — `node --test` does not
-# exist there — so the tests run on the LTS, where `--experimental-test-coverage` is stable enough,
-# and the floor lives in `scripts/ci_test.sh`.
+# `ws`, `mqtt`, `redis` and `log4js`). It runs on the same major as the runtime image
+# (`node:22-alpine`); the floor lives in `scripts/ci_test.sh`.
 on:
   pull_request:
     paths:

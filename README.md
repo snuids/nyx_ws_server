@@ -19,7 +19,7 @@ node --test tests/*.test.js   # the suite
 sh scripts/ci_test.sh         # what the CI runs: the suite, and a floor under its coverage
 ```
 
-`node --test` needs Node 18+; the runtime image is still Node 13, which only runs the server.
+The runtime image is `node:22-alpine`, the same major the tests run on.
 
 Two files, two jobs:
 
