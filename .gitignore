@@ -12,3 +12,4 @@ sources/.DS_Store
 *.pem
 *.key
 *.p12
+coverage/
