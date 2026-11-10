@@ -1,0 +1,66 @@
+name: CI - Tests
+
+# The suite covers `sources/` with Node's own coverage (no dependency to install: the tests double
+# `ws`, `mqtt`, `redis` and `log4js`). The runtime image is still Node 13 — `node --test` does not
+# exist there — so the tests run on the LTS, where `--experimental-test-coverage` is stable enough,
+# and the floor lives in `scripts/ci_test.sh`.
+on:
+  pull_request:
+    paths:
+      - 'sources/**'
+      - 'tests/**'
+      - 'scripts/ci_test.sh'
+      - '.github/workflows/ci-tests.yml'
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  # `contents: write` to publish the badge on the `badges` branch (master only)
+  contents: write
+
+concurrency:
+  group: ws-server-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run the suite under the coverage floor
+        run: BADGE_OUT=coverage/badge.json sh scripts/ci_test.sh
+
+      - name: Publish the coverage badge data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          test -f coverage/badge.json
+          cd "$RUNNER_TEMP"
+          git init -q badges
+          cd badges
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q --depth=1 origin badges || true
+          if git rev-parse --verify -q origin/badges >/dev/null; then
+            git checkout -q -b badges origin/badges
+          else
+            git checkout -q --orphan badges
+          fi
+          cp "$GITHUB_WORKSPACE/coverage/badge.json" coverage.json
+          git add coverage.json
+          git -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "coverage: ${GITHUB_SHA::7}"
+          git push -q origin badges
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
