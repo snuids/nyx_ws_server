@@ -23,7 +23,7 @@ const SERVER = path.join(SOURCES, "ws_server.js");
 const ALICE = { id: "alice@example.com", login: "alice", privileges: ["A1"] };
 const TOKEN = "e5b0c1d2ab";
 
-/** Le journal: on retient les lignes pour verifier ce qui ne doit pas y apparaitre. */
+/** The log: lines are kept to check what must not appear in them. */
 class FakeLogger {
   constructor() {
     this.lines = [];
@@ -92,7 +92,7 @@ class FakeServer {
   close() {
     this.closed = true;
   }
-  /** Un client se connecte, comme le ferait `ws` sur une poignee de main. */
+  /** A client connects, the way `ws` does during a handshake. */
   connect(socket = new FakeSocket()) {
     this.clients.add(socket);
     this.emit("connection", socket, { connection: { remoteAddress: "10.0.0.5" } });
@@ -154,10 +154,10 @@ class FakeRedis {
 }
 
 /**
- * Charge `ws_server.js` avec les doubles en place et rend la poignee de mains.
+ * Loads `ws_server.js` with the doubles in place and returns the handshake.
  *
- * `require` est intercepte le temps du chargement: le serveur est un script, pas un module, il
- * prend `ws`, `mqtt`, `redis` et `log4js` au moment ou on l'evalue.
+ * `require` is intercepted for the duration of the load: the server is a script, not a module, and
+ * it picks up `ws`, `mqtt`, `redis` and `log4js` when it is evaluated.
  */
 function loadServer(options = {}) {
   const logger = new FakeLogger();
@@ -246,18 +246,18 @@ function loadServer(options = {}) {
     redis,
     timers,
     exits,
-    // La configuration telle que le serveur l'a lue: `env CONFIG` est reanalyse a l'evaluation,
-    // donc c'est une copie, et c'est celle-la qu'il faut interroger.
+    // The configuration as the server read it: `env CONFIG` is parsed again on evaluation, so
+    // this is a copy, and this is the one to ask.
     config: JSON.parse(configJson.replace(/'/g, '"')),
     target(name) {
       const index = config.findIndex((entry) => entry.name === name);
       return { entry: config[index], server: FakeServer.instances[index] };
     },
-    /** Le serveur de `name`, connecte un client et le rend. */
+    /** The `name` server, connects a client and returns it. */
     connect(name, socket) {
       return server.target(name).server.connect(socket);
     },
-    /** Un client s'authentifie: le jeton est dans le magasin, il appartient au compte. */
+    /** A client authenticates: the token is in the store and belongs to the account. */
     authenticate(name, socket, account = ALICE, keys = { user: account }) {
       redis.store["nyx_tok_" + TOKEN] = JSON.stringify(account);
       socket.emit("message", JSON.stringify({ token: TOKEN, user: keys.user }));
@@ -298,7 +298,7 @@ function loadServer(options = {}) {
   return server;
 }
 
-/** Un test qui charge le serveur doit retirer ses ecouteurs de signal ensuite. */
+/** A test that loads the server has to remove its signal listeners afterwards. */
 function withServer(t, options) {
   const server = loadServer(options);
   t.after(() => server.cleanup());
@@ -473,14 +473,14 @@ test("a store that answers with an error refuses the socket", (t) => {
 test("a store that never answers lets the socket time out", (t) => {
   const server = withServer(t);
   const socket = server.connect("HHTs");
-  server.redis.get = () => {}; // le magasin ne repond jamais
+  server.redis.get = () => {}; // the store never answers
 
   server.captureTimers(() => {
     socket.emit("message", JSON.stringify({ token: TOKEN, user: { user: "alice" } }));
   });
   assert.deepStrictEqual(socket.closed, []);
 
-  // Le delai d'authentification est le dernier pose par le handler.
+  // The authentication timer is the last one the handler set.
   const timeout = server.lastTimeout();
   assert.strictEqual(timeout.delay, 2000);
   timeout.callback();
@@ -560,7 +560,7 @@ test("a disconnect unregisters the login it held", (t) => {
 
   socket.emit("close");
 
-  // Le login ne doit plus etre adressable: le message est journalise comme perdu.
+  // The login must not be addressable any more: the message is logged as lost.
   server.mqtt.emit("message", "NYX_WS_IN", Buffer.from(JSON.stringify({ login: "alice", data: {} })));
   assert.ok(server.logger.reasons().some((line) => line.includes("not found or not connected")));
 });
@@ -584,7 +584,7 @@ test("the life sign counts the connections and the logins", (t) => {
     sign.clients.find((entry) => entry.name === "HHTs"),
     { name: "HHTs", port: 59999, clients: 1, logins: ["alice@example.com", "alice"] }
   );
-  // Un serveur configure sans client s'annonce quand meme, a zero.
+  // A server configured without clients still announces itself, at zero.
   assert.deepStrictEqual(
     sign.clients.find((entry) => entry.name === "Console"),
     { name: "Console", port: 59998, clients: 0, logins: [] }
@@ -596,7 +596,7 @@ test("the heartbeat only writes lifesign frames to open clients", (t) => {
   const open = server.connect("HHTs");
   const closed = server.connect("HHTs");
   closed.readyState = 3;
-  const silent = server.connect("Quiet"); // `lifesign: false` dans la configuration
+  const silent = server.connect("Quiet"); // `lifesign: false` in the configuration
 
   server.interval(1)(); // checkWebSockets
 
@@ -608,7 +608,7 @@ test("the heartbeat only writes lifesign frames to open clients", (t) => {
 test("SIGTERM closes the servers, the broker link and the store", (t) => {
   const server = withServer(t);
   const { server: webSocketServer } = server.target("HHTs");
-  // `shutdown` finit par `process.exit(0)`: sans ce double, le processus de test mourrait ici.
+  // `shutdown` ends with `process.exit(0)`: without this double, the test process would die here.
   const originalExit = process.exit;
   process.exit = (code) => server.exits.push(code);
   t.after(() => {
@@ -620,7 +620,7 @@ test("SIGTERM closes the servers, the broker link and the store", (t) => {
   assert.strictEqual(webSocketServer.closed, true);
   assert.strictEqual(server.mqtt.ended, true);
   assert.strictEqual(server.redis.quits, 1);
-  // L'arret differe de 500 ms, non bloque pour le conteneur.
+  // The stop is deferred by 500 ms, so it does not block the container.
   const exit = server.lastTimeout();
   assert.strictEqual(exit.delay, 500);
   exit.callback();
@@ -684,7 +684,7 @@ test("the payload bound is set on every server", (t) => {
   });
 });
 
-// --- Ce que le conteneur voit quand les choses vont mal ---------------------
+// --- What the container sees when things go wrong ---------------------------
 
 test("a Redis outage is logged, not thrown", (t) => {
   const server = withServer(t);
@@ -719,7 +719,7 @@ test("a store that answers after the deadline is ignored", (t) => {
   const socket = server.connect("HHTs");
   let answer = null;
   server.redis.get = (key, callback) => {
-    answer = callback; // le magasin repondra plus tard
+    answer = callback; // the store will answer later
   };
 
   server.captureTimers(() => {
@@ -728,7 +728,7 @@ test("a store that answers after the deadline is ignored", (t) => {
   server.lastTimeout().callback(); // le delai expire d'abord
   assert.deepStrictEqual(socket.closed, [[4401, "authentication timed out"]]);
 
-  // Puis le magasin repond: le socket ne doit pas etre authentifie apres coup.
+  // Then the store answers: the socket must not end up authenticated.
   server.redis.store["nyx_tok_" + TOKEN] = JSON.stringify(ALICE);
   answer(null, JSON.stringify(ALICE));
   assert.notStrictEqual(socket.authenticated, true);
@@ -741,7 +741,7 @@ test("a deadline that fires after a prompt answer does nothing", (t) => {
   server.captureTimers(() => server.authenticate("HHTs", socket));
   assert.strictEqual(socket.authenticated, true);
 
-  server.lastTimeout().callback(); // le delai se referme sur une reponse deja arrivee
+  server.lastTimeout().callback(); // the timer closes on an answer that already arrived
 
   assert.deepStrictEqual(socket.closed, []);
 });

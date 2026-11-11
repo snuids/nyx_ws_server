@@ -19,8 +19,8 @@ BRANCH_FLOOR=95
 
 cd "$(dirname "$0")/.."
 
-# `tests/` seul ne resout pas sur Node 22 (`Cannot find module .../tests`) : la liste des fichiers
-# est donnee par le shell, qui la resout partout.
+# `tests/` alone does not resolve on Node 22 (`Cannot find module .../tests`): the list of files
+# is produced by the shell, which resolves it everywhere.
 # `--test-reporter=spec` fixes the shape of the report (the default reporter switches to TAP when
 # there is no TTY, which is exactly the CI case, and prefixes every line with `# `).
 # `--test-coverage-exclude` keeps the tests themselves out of the measure: the ratio has to be about
@@ -32,13 +32,13 @@ if ! REPORT=$(node --test --experimental-test-coverage --test-reporter=spec \
     exit 1
 fi
 
-# Le prefixe du rapport (`ℹ ` en spec, `# ` en TAP) est retire avant lecture.
+# The report prefix (`ℹ ` in spec, `# ` in TAP) is stripped before parsing.
 CLEAN=$(printf '%s\n' "$REPORT" | sed 's/^[[:space:]]*[#ℹ]\{0,1\}[[:space:]]*//')
 printf '%s\n' "$CLEAN" | grep -E '^(tests|pass|fail|skipped|all files)' | tail -8
 printf '%s\n' "$REPORT" | tail -16
 
-# Une suite vide rapporte 100 % : sans ce garde, un motif qui ne trouve plus de fichier passerait
-# pour une couverture parfaite.
+# An empty suite reports 100 %: without this guard, a pattern that stopped matching files would
+# read as perfect coverage.
 count=$(printf '%s\n' "$CLEAN" | awk '/^tests /{print $2}')
 if [ "${count:-0}" = "0" ] || [ -z "${count:-}" ]; then
     printf '%s\n' "$REPORT"
@@ -63,7 +63,7 @@ fi
 awk -v total="$total" -v floor="$FLOOR" 'BEGIN{if (total < floor) {printf "ci_test: coverage %s %% is under the floor of %s %%\n", total, floor; exit 1}}'
 awk -v branches="$branches" -v floor="$BRANCH_FLOOR" 'BEGIN{if (branches < floor) {printf "ci_test: branches %s %% is under the floor of %s %%\n", branches, floor; exit 1}}'
 
-# La CI envoie ce fichier sur la branche `badges` (job de publication, master seulement).
+# CI pushes this file to the `badges` branch (publish job, master only).
 if [ -n "${BADGE_OUT:-}" ]; then
     mkdir -p "$(dirname "$BADGE_OUT")"
     cat > "$BADGE_OUT" <<EOF
