@@ -37,6 +37,6 @@ a socket is allowed to publish into the broker at all, and that a refused socket
 **4401** rather than left open.
 
 Coverage is measured by `sh scripts/ci_test.sh` and gated at **98 % lines / 95 % branches**
-(measured on 2026-11-09: 99,57 / 95,73 — `ws_server.js` 99,48 %, `auth.js` 100 %). The floor is the
+(measured on 2026-11-11: 99,57 / 95,73 — `ws_server.js` 99,48 %, `auth.js` 100 %, 49 tests). The floor is the
 level actually measured, never a wish; it moves up with the tests, never down. The badge on the
 `badges` branch is published by `.github/workflows/ci-tests.yml` on `master`.
